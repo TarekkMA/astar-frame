@@ -221,6 +221,15 @@ pub mod pallet {
         MaintenanceMode(bool),
         /// Reward handling modified
         RewardDestination(T::AccountId, RewardDestination),
+        /// Nomination part has been transfered from one contract to another.
+        ///
+        /// \(staker account, origin smart contract, amount, target smart contract\)
+        NominationTransfer(
+            T::AccountId,
+            T::SmartContract,
+            BalanceOf<T>,
+            T::SmartContract,
+        ),
     }
 
     #[pallet::error]
@@ -486,31 +495,14 @@ pub mod pallet {
                 Self::contract_stake_info(&contract_id, current_era).unwrap_or_default();
             let mut staker_info = Self::staker_info(&staker, &contract_id);
 
-            ensure!(
-                !staker_info.latest_staked_value().is_zero()
-                    || staking_info.number_of_stakers < T::MaxNumberOfStakersPerContract::get(),
-                Error::<T>::MaxNumberOfStakersExceeded
-            );
-            if staker_info.latest_staked_value().is_zero() {
-                staking_info.number_of_stakers = staking_info.number_of_stakers.saturating_add(1);
-            }
+            Self::bond_and_stake_helper(
+                &mut staker_info,
+                &mut staking_info,
+                value_to_stake,
+                current_era,
+            )?;
 
-            staker_info
-                .stake(current_era, value_to_stake)
-                .map_err(|_| Error::<T>::UnexpectedStakeInfoEra)?;
-            ensure!(
-                // One spot should remain for compounding reward claim call
-                staker_info.len() < T::MaxEraStakeValues::get(),
-                Error::<T>::TooManyEraStakeValues
-            );
-            ensure!(
-                staker_info.latest_staked_value() >= T::MinimumStakingAmount::get(),
-                Error::<T>::InsufficientValue,
-            );
-
-            // Increment ledger and total staker value for contract.
             ledger.locked = ledger.locked.saturating_add(value_to_stake);
-            staking_info.total = staking_info.total.saturating_add(value_to_stake);
 
             // Update storage
             GeneralEraInfo::<T>::mutate(&current_era, |value| {
@@ -529,6 +521,72 @@ pub mod pallet {
                 contract_id,
                 value_to_stake,
             ));
+            Ok(().into())
+        }
+
+        /// Transfer nomination from one contract to another
+        #[pallet::weight(0)] // TODO update benchmarks
+        pub fn transfer_nomination(
+            origin: OriginFor<T>,
+            origin_contract_id: T::SmartContract,
+            target_contract_id: T::SmartContract,
+            #[pallet::compact] value: BalanceOf<T>, // TODO: this can be removed if we decide so
+        ) -> DispatchResultWithPostInfo {
+            Self::ensure_pallet_enabled()?;
+            let staker = ensure_signed(origin)?;
+
+            // TODO: add cooldown check!
+
+            // Both contracts must be active
+            ensure!(
+                Self::is_active(&origin_contract_id),
+                Error::<T>::NotOperatedContract
+            );
+            ensure!(
+                Self::is_active(&target_contract_id),
+                Error::<T>::NotOperatedContract
+            );
+
+            // Validate origin contract related data & update it
+            let current_era = Self::current_era();
+            let mut origin_staker_info = Self::staker_info(&staker, &origin_contract_id);
+            let mut origin_staking_info =
+                Self::contract_stake_info(&origin_contract_id, current_era).unwrap_or_default();
+
+            let origin_to_target_transfer_value = Self::unbond_and_unstake_helper(
+                &mut origin_staker_info,
+                &mut origin_staking_info,
+                value,
+                current_era,
+            )?;
+
+            // Validate target contract related data & update it
+            let mut target_staker_info = Self::staker_info(&staker, &target_contract_id);
+            let mut target_staking_info =
+                Self::contract_stake_info(&target_contract_id, current_era).unwrap_or_default();
+
+            Self::bond_and_stake_helper(
+                &mut target_staker_info,
+                &mut target_staking_info,
+                origin_to_target_transfer_value,
+                current_era,
+            )?;
+
+            // Update origin data
+            ContractEraStake::<T>::insert(&origin_contract_id, current_era, origin_staking_info);
+            Self::update_staker_info(&staker, &origin_contract_id, origin_staker_info);
+
+            // Update target data
+            ContractEraStake::<T>::insert(&target_contract_id, current_era, target_staking_info);
+            Self::update_staker_info(&staker, &target_contract_id, target_staker_info);
+
+            Self::deposit_event(Event::<T>::NominationTransfer(
+                staker,
+                origin_contract_id,
+                origin_to_target_transfer_value,
+                target_contract_id,
+            ));
+
             Ok(().into())
         }
 
@@ -556,40 +614,17 @@ pub mod pallet {
                 Error::<T>::NotOperatedContract,
             );
 
-            // Get the latest era staking points for the contract.
-            let mut staker_info = Self::staker_info(&staker, &contract_id);
-            let staked_value = staker_info.latest_staked_value();
-            ensure!(staked_value > Zero::zero(), Error::<T>::NotStakedContract);
-
             let current_era = Self::current_era();
+            let mut staker_info = Self::staker_info(&staker, &contract_id);
             let mut contract_stake_info =
                 Self::contract_stake_info(&contract_id, current_era).unwrap_or_default();
 
-            // Calculate the value which will be unstaked.
-            let remaining = staked_value.saturating_sub(value);
-            let value_to_unstake = if remaining < T::MinimumStakingAmount::get() {
-                contract_stake_info.number_of_stakers =
-                    contract_stake_info.number_of_stakers.saturating_sub(1);
-                staked_value
-            } else {
-                value
-            };
-            contract_stake_info.total = contract_stake_info.total.saturating_sub(value_to_unstake);
-
-            // Sanity check
-            ensure!(
-                value_to_unstake > Zero::zero(),
-                Error::<T>::UnstakingWithNoValue
-            );
-
-            staker_info
-                .unstake(current_era, value_to_unstake)
-                .map_err(|_| Error::<T>::UnexpectedStakeInfoEra)?;
-            ensure!(
-                // One spot should remain for compounding reward claim call
-                staker_info.len() < T::MaxEraStakeValues::get(),
-                Error::<T>::TooManyEraStakeValues
-            );
+            let value_to_unstake = Self::unbond_and_unstake_helper(
+                &mut staker_info,
+                &mut contract_stake_info,
+                value,
+                current_era,
+            )?;
 
             // Update the chunks and write them to storage
             let mut ledger = Self::ledger(&staker);
@@ -908,6 +943,80 @@ pub mod pallet {
     }
 
     impl<T: Config> Pallet<T> {
+        // TODO: name & doc
+        fn bond_and_stake_helper(
+            staker_info: &mut StakerInfo<BalanceOf<T>>,
+            staking_info: &mut ContractStakeInfo<BalanceOf<T>>,
+            value: BalanceOf<T>,
+            current_era: EraIndex,
+        ) -> Result<(), Error<T>> {
+            ensure!(
+                !staker_info.latest_staked_value().is_zero()
+                    || staking_info.number_of_stakers < T::MaxNumberOfStakersPerContract::get(),
+                Error::<T>::MaxNumberOfStakersExceeded
+            );
+            if staker_info.latest_staked_value().is_zero() {
+                staking_info.number_of_stakers = staking_info.number_of_stakers.saturating_add(1);
+            }
+
+            staker_info
+                .stake(current_era, value)
+                .map_err(|_| Error::<T>::UnexpectedStakeInfoEra)?;
+            ensure!(
+                // One spot should remain for compounding reward claim call
+                staker_info.len() < T::MaxEraStakeValues::get(),
+                Error::<T>::TooManyEraStakeValues
+            );
+            ensure!(
+                staker_info.latest_staked_value() >= T::MinimumStakingAmount::get(),
+                Error::<T>::InsufficientValue,
+            );
+
+            // Increment ledger and total staker value for contract.
+            staking_info.total = staking_info.total.saturating_add(value);
+
+            return Ok(());
+        }
+
+        // TODO: improve name & doc
+        fn unbond_and_unstake_helper(
+            staker_info: &mut StakerInfo<BalanceOf<T>>,
+            contract_stake_info: &mut ContractStakeInfo<BalanceOf<T>>,
+            value: BalanceOf<T>,
+            current_era: EraIndex,
+        ) -> Result<BalanceOf<T>, Error<T>> {
+            let staked_value = staker_info.latest_staked_value();
+            ensure!(staked_value > Zero::zero(), Error::<T>::NotStakedContract);
+
+            // Calculate the value which will be unstaked.
+            let remaining = staked_value.saturating_sub(value);
+            let value_to_unstake = if remaining < T::MinimumStakingAmount::get() {
+                contract_stake_info.number_of_stakers =
+                    contract_stake_info.number_of_stakers.saturating_sub(1);
+                staked_value
+            } else {
+                value
+            };
+            contract_stake_info.total = contract_stake_info.total.saturating_sub(value_to_unstake);
+
+            // Sanity check
+            ensure!(
+                value_to_unstake > Zero::zero(),
+                Error::<T>::UnstakingWithNoValue
+            );
+
+            staker_info
+                .unstake(current_era, value_to_unstake)
+                .map_err(|_| Error::<T>::UnexpectedStakeInfoEra)?;
+            ensure!(
+                // One spot should remain for compounding reward claim call
+                staker_info.len() < T::MaxEraStakeValues::get(),
+                Error::<T>::TooManyEraStakeValues
+            );
+
+            return Ok(value_to_unstake);
+        }
+
         /// Get AccountId assigned to the pallet.
         pub(crate) fn account_id() -> T::AccountId {
             T::PalletId::get().into_account()
