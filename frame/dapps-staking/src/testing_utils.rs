@@ -394,6 +394,31 @@ pub(crate) fn assert_withdraw_unbonded(staker: AccountId) {
     );
 }
 
+/// TODO
+pub(crate) fn assert_nomination_transfer(
+    staker: AccountId,
+    origin_contract_id: &MockSmartContract<AccountId>,
+    target_contract_id: &MockSmartContract<AccountId>,
+    value: Balance,
+) {
+    // TODO
+    let expected_transfer_amount = value;
+
+    // Ensure op is successful and event is emitted
+    assert_ok!(DappsStaking::nomination_transfer(
+        Origin::signed(staker),
+        origin_contract_id.clone(),
+        value,
+        target_contract_id.clone()
+    ));
+    System::assert_last_event(mock::Event::DappsStaking(Event::NominationTransfer(
+        staker,
+        origin_contract_id.clone(),
+        expected_transfer_amount,
+        target_contract_id.clone(),
+    )));
+}
+
 /// Used to perform claim for stakers with success assertion
 pub(crate) fn assert_claim_staker(claimer: AccountId, contract_id: &MockSmartContract<AccountId>) {
     let (claim_era, _) = DappsStaking::staker_info(&claimer, contract_id).claim();

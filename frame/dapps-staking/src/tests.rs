@@ -1223,6 +1223,94 @@ fn withdraw_unbonded_no_unbonding_period() {
 }
 
 #[test]
+fn transfer_nomination_to_same_contract_is_not_ok() {
+    ExternalityBuilder::build().execute_with(|| {
+        initialize_first_block();
+        let developer = 1;
+        let staker = 2;
+        let contract_id = MockSmartContract::Evm(H160::repeat_byte(0x01));
+
+        assert_register(developer, &contract_id);
+
+        assert_noop!(
+            DappsStaking::nomination_transfer(
+                Origin::signed(staker),
+                contract_id,
+                100,
+                contract_id,
+            ),
+            Error::<TestRuntime>::NominationTransferToSameContract
+        );
+    })
+}
+
+#[test]
+fn transfer_nomination_to_inactive_contracts_is_not_ok() {
+    ExternalityBuilder::build().execute_with(|| {
+        initialize_first_block();
+
+        let origin_developer = 1;
+        let target_developer = 2;
+        let staker = 3;
+        let origin_contract_id = MockSmartContract::Evm(H160::repeat_byte(0x01));
+        let target_contract_id = MockSmartContract::Evm(H160::repeat_byte(0x02));
+
+        // assert_register(developer, &contract_id);
+
+        // 1. Neither contract is registered
+        assert_noop!(
+            DappsStaking::nomination_transfer(
+                Origin::signed(staker),
+                origin_contract_id,
+                100,
+                target_contract_id,
+            ),
+            Error::<TestRuntime>::NotOperatedContract
+        );
+
+        // 2. Only first contract is registered
+        assert_register(origin_developer, &origin_contract_id);
+        assert_noop!(
+            DappsStaking::nomination_transfer(
+                Origin::signed(staker),
+                origin_contract_id,
+                100,
+                target_contract_id,
+            ),
+            Error::<TestRuntime>::NotOperatedContract
+        );
+
+        // 3. Both are registered but then target contract gets unregistered
+        assert_register(target_developer, &target_contract_id);
+        assert_bond_and_stake(staker, &origin_contract_id, 100);
+        assert_nomination_transfer(staker, &origin_contract_id, &target_contract_id, 100);
+
+        assert_unregister(target_developer, &target_contract_id);
+        assert_noop!(
+            DappsStaking::nomination_transfer(
+                Origin::signed(staker),
+                origin_contract_id,
+                100,
+                target_contract_id,
+            ),
+            Error::<TestRuntime>::NotOperatedContract
+        );
+
+        // 4. Origin contract is unregistered
+        assert_unregister(origin_developer, &origin_contract_id);
+        assert_noop!(
+            DappsStaking::nomination_transfer(
+                Origin::signed(staker),
+                origin_contract_id,
+                100,
+                target_contract_id,
+            ),
+            Error::<TestRuntime>::NotOperatedContract
+        );
+    })
+}
+
+#[test]
 fn claim_not_staked_contract() {
     ExternalityBuilder::build().execute_with(|| {
         initialize_first_block();
@@ -1681,6 +1769,15 @@ fn maintenance_mode_is_ok() {
         );
         assert_noop!(
             DappsStaking::withdraw_unbonded(Origin::signed(account)),
+            Error::<TestRuntime>::Disabled
+        );
+        assert_noop!(
+            DappsStaking::nomination_transfer(
+                Origin::signed(account),
+                contract_id,
+                100,
+                contract_id,
+            ),
             Error::<TestRuntime>::Disabled
         );
 
