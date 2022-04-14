@@ -398,8 +398,8 @@ pub(crate) fn assert_withdraw_unbonded(staker: AccountId) {
 pub(crate) fn assert_nomination_transfer(
     staker: AccountId,
     origin_contract_id: &MockSmartContract<AccountId>,
-    target_contract_id: &MockSmartContract<AccountId>,
     value: Balance,
+    target_contract_id: &MockSmartContract<AccountId>,
 ) {
     // TODO
     let expected_transfer_amount = value;
