@@ -1223,6 +1223,49 @@ fn withdraw_unbonded_no_unbonding_period() {
 }
 
 #[test]
+fn nomination_transfer_is_ok() {
+    ExternalityBuilder::build().execute_with(|| {
+        initialize_first_block();
+
+        let origin_developer = 1;
+        let target_developer = 2;
+        let staker = 3;
+        let origin_contract_id = MockSmartContract::Evm(H160::repeat_byte(0x01));
+        let target_contract_id = MockSmartContract::Evm(H160::repeat_byte(0x02));
+
+        assert_register(origin_developer, &origin_contract_id);
+        assert_register(target_developer, &target_contract_id);
+        assert_bond_and_stake(staker, &origin_contract_id, MINIMUM_STAKING_AMOUNT * 2);
+
+        // The first transfer will ensure that both contracts are staked after operation is complete
+        assert_nomination_transfer(
+            staker,
+            &origin_contract_id,
+            MINIMUM_STAKING_AMOUNT,
+            &target_contract_id,
+        );
+        assert!(
+            !GeneralStakerInfo::<TestRuntime>::get(&staker, &origin_contract_id)
+                .latest_staked_value()
+                .is_zero()
+        );
+
+        // The second operation should fully unstake origin contract since it takes it below minimum staking amount
+        assert_nomination_transfer(
+            staker,
+            &origin_contract_id,
+            MINIMUM_STAKING_AMOUNT,
+            &target_contract_id,
+        );
+        assert!(
+            GeneralStakerInfo::<TestRuntime>::get(&staker, &origin_contract_id)
+                .latest_staked_value()
+                .is_zero()
+        );
+    })
+}
+
+#[test]
 fn nomination_transfer_to_same_contract_is_not_ok() {
     ExternalityBuilder::build().execute_with(|| {
         initialize_first_block();
@@ -1431,6 +1474,33 @@ fn nomination_transfer_with_no_value() {
                 target_contract_id.clone()
             ),
             Error::<TestRuntime>::UnstakingWithNoValue
+        );
+    })
+}
+
+#[test]
+fn nomination_transfer_with_insufficient_value() {
+    ExternalityBuilder::build().execute_with(|| {
+        initialize_first_block();
+
+        let origin_developer = 1;
+        let target_developer = 2;
+        let staker = 3;
+        let origin_contract_id = MockSmartContract::Evm(H160::repeat_byte(0x01));
+        let target_contract_id = MockSmartContract::Evm(H160::repeat_byte(0x02));
+
+        assert_register(origin_developer, &origin_contract_id);
+        assert_register(target_developer, &target_contract_id);
+        assert_bond_and_stake(staker, &origin_contract_id, 100);
+
+        assert_noop!(
+            DappsStaking::nomination_transfer(
+                Origin::signed(staker),
+                origin_contract_id.clone(),
+                MINIMUM_STAKING_AMOUNT - 1,
+                target_contract_id.clone()
+            ),
+            Error::<TestRuntime>::InsufficientValue
         );
     })
 }
