@@ -44,7 +44,7 @@ fn smart_contract<T: Config>(index: u8) -> T::SmartContract {
     *encoded_smart_contract.last_mut().unwrap() = index;
 
     Decode::decode(&mut TrailingZeroInput::new(encoded_smart_contract.as_ref()))
-        .expect("infinite length input; no invalid inputs for type; qed")
+        .expect("Shouldn't occur as long as EVM is the default type.")
 }
 
 /// Payout block rewards to stakers & dapps
