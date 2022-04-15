@@ -700,7 +700,6 @@ pub mod pallet {
             cooldowns
                 .try_push(current_block + T::NominationTransferCooldown::get())
                 .map_err(|_| Error::<T>::MaxNumberOfNominationTransfersExceeded)?;
-            // TODO: one alternative is to disallow parallel cooldowns and instead use last value from vec and add cooldown period to it
 
             // Validate origin contract related data & update it
             let current_era = Self::current_era();
