@@ -1237,6 +1237,11 @@ fn nomination_transfer_is_ok() {
         assert_register(target_developer, &target_contract_id);
         assert_bond_and_stake(staker, &origin_contract_id, MINIMUM_STAKING_AMOUNT * 2);
 
+        // Ensure that at the start, staker doesn't have any cooldowns
+        assert!(!NominationTransferCooldowns::<TestRuntime>::contains_key(
+            &staker
+        ));
+
         // The first transfer will ensure that both contracts are staked after operation is complete
         assert_nomination_transfer(
             staker,

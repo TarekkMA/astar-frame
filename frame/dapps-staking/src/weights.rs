@@ -15,12 +15,13 @@ pub trait WeightInfo {
     fn bond_and_stake() -> Weight;
     fn unbond_and_unstake() -> Weight;
     fn withdraw_unbonded() -> Weight;
+	fn nomination_transfer() -> Weight;
     fn claim_staker_without_restake() -> Weight;
     fn claim_staker_with_restake() -> Weight;
     fn claim_dapp() -> Weight;
     fn force_new_era() -> Weight;
-		fn maintenance_mode() -> Weight;
-		fn set_reward_destination() -> Weight;
+    fn maintenance_mode() -> Weight;
+    fn set_reward_destination() -> Weight;
 }
 
 /// Weights for pallet_staking using the Substrate node and recommended hardware.
@@ -120,6 +121,10 @@ impl<T: frame_system::Config> WeightInfo for SubstrateWeight<T> {
 		(91_000_000 as Weight)
 			.saturating_add(T::DbWeight::get().reads(10 as Weight))
 			.saturating_add(T::DbWeight::get().writes(6 as Weight))
+	}
+	fn nomination_transfer() -> Weight {
+		// TODO: measure and add values here
+		0
 	}
 	// Storage: DappsStaking PalletDisabled (r:1 w:0)
 	// Storage: DappsStaking GeneralStakerInfo (r:1 w:1)
@@ -247,6 +252,10 @@ impl WeightInfo for () {
 		(114_252_000 as Weight)
 			.saturating_add(RocksDbWeight::get().reads(5 as Weight))
 			.saturating_add(RocksDbWeight::get().writes(3 as Weight))
+	}
+	fn nomination_transfer() -> Weight {
+		// TODO: measure and add values here
+		0
 	}
 	// Storage: DappsStaking PalletDisabled (r:1 w:0)
 	// Storage: DappsStaking GeneralStakerInfo (r:1 w:1)

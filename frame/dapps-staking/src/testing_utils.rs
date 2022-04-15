@@ -11,6 +11,7 @@ pub(crate) struct MemorySnapshot {
     contract_info: ContractStakeInfo<Balance>,
     free_balance: Balance,
     ledger: AccountLedger<Balance>,
+    nomination_transfer_cd: Vec<BlockNumber>,
 }
 
 impl MemorySnapshot {
@@ -27,6 +28,7 @@ impl MemorySnapshot {
             contract_info: DappsStaking::contract_stake_info(contract_id, era).unwrap_or_default(),
             ledger: DappsStaking::ledger(&account),
             free_balance: <TestRuntime as Config>::Currency::free_balance(&account),
+            nomination_transfer_cd: DappsStaking::nomination_transfer_cooldowns(account).into(),
         }
     }
 
@@ -40,6 +42,7 @@ impl MemorySnapshot {
             contract_info: DappsStaking::contract_stake_info(contract_id, era).unwrap_or_default(),
             ledger: Default::default(),
             free_balance: Default::default(),
+            nomination_transfer_cd: Default::default(),
         }
     }
 }
@@ -482,7 +485,17 @@ pub(crate) fn assert_nomination_transfer(
         ));
     }
 
-    // TODO: check nomination transfer cooldowns
+    // Ensure nomination transfer cooldowns are as expected
+    let current_block = System::block_number();
+    let mut filtered_init_cds = origin_init_state.nomination_transfer_cd.clone();
+    filtered_init_cds.retain(|&x| x > current_block);
+    let (&latest_cd, old_cds) = origin_final_state
+        .nomination_transfer_cd
+        .split_last()
+        .unwrap();
+
+    assert_eq!(latest_cd, current_block + NOMINATION_TRANSFER_COOLDOWN);
+    assert_eq!(filtered_init_cds, old_cds);
 }
 
 /// Used to perform claim for stakers with success assertion

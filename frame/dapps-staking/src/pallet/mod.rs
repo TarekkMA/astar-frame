@@ -669,11 +669,11 @@ pub mod pallet {
         /// Minor difference is that there is no unbonding period so this call won't
         /// check whether max number of unbonding chunks is exceeded.
         ///
-        #[pallet::weight(0)] // TODO update benchmarks
+        #[pallet::weight(T::WeightInfo::nomination_transfer())]
         pub fn nomination_transfer(
             origin: OriginFor<T>,
             origin_contract_id: T::SmartContract,
-            #[pallet::compact] value: BalanceOf<T>, // TODO: this can be removed if we decide so
+            #[pallet::compact] value: BalanceOf<T>,
             target_contract_id: T::SmartContract,
         ) -> DispatchResultWithPostInfo {
             Self::ensure_pallet_enabled()?;
