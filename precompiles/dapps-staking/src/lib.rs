@@ -464,7 +464,7 @@ pub enum Action {
     ClaimDapp = "claim_dapp(address,uint128)",
     ClaimStaker = "claim_staker(address)",
     WithdrawFromUnregistered = "withdraw_from_unregistered(address)",
-    NominationTransfer = "nomination_transfer(address, uint128, address)",
+    NominationTransfer = "nomination_transfer(address,uint128,address)",
 }
 
 impl<R> Precompile for DappsStakingWrapper<R>

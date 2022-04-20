@@ -8,7 +8,7 @@ use frame_support::{assert_ok, dispatch::Dispatchable};
 use pallet_evm::{ExitSucceed, PrecompileSet};
 use sha3::{Digest, Keccak256};
 use sp_core::H160;
-use sp_runtime::{AccountId32, Perbill};
+use sp_runtime::{traits::Zero, AccountId32, Perbill};
 use std::assert_matches::assert_matches;
 
 const ARG_SIZE_BYTES: usize = 32;
@@ -429,6 +429,38 @@ fn withdraw_from_unregistered() {
         });
 }
 
+#[test]
+fn nomination_transfer() {
+    ExternalityBuilder::default()
+        .with_balances(vec![
+            (TestAccount::Alex.into(), 200 * AST),
+            (TestAccount::Dino.into(), 200 * AST),
+            (TestAccount::Bobo.into(), 200 * AST),
+        ])
+        .build()
+        .execute_with(|| {
+            initialize_first_block();
+
+            // register two contracts for nomination transfer test
+            let origin_contract: [u8; 20] = H160::repeat_byte(0x09).to_fixed_bytes();
+            let target_contract: [u8; 20] = H160::repeat_byte(0x0A).to_fixed_bytes();
+            register_and_verify(TestAccount::Alex.into(), origin_contract);
+            register_and_verify(TestAccount::Dino.into(), target_contract);
+
+            // bond & stake the origin contract
+            let amount_staked_bobo = 100 * AST;
+            bond_stake_and_verify(TestAccount::Bobo, TEST_CONTRACT, amount_staked_bobo);
+
+            // transfer nomination and ensure it was successful
+            nomination_transfer_verify(
+                TestAccount::Bobo.into(),
+                origin_contract,
+                10 * AST,
+                target_contract,
+            );
+        });
+}
+
 // ****************************************************************************************************
 // Helper functions
 // ****************************************************************************************************
@@ -610,18 +642,69 @@ fn withdraw_unbonded_verify(staker: AccountId32) {
 
 /// helper function to withdraw funds from unregistered contract
 fn withdraw_from_unregistered_verify(staker: AccountId32, contract_array: [u8; 20]) {
-    let selector = &Keccak256::digest(b"withdraw_from_unregistered(account)")[0..4];
+    let selector = &Keccak256::digest(b"withdraw_from_unregistered(address)")[0..4];
     let mut input_data = Vec::<u8>::from([0u8; 36]);
 
     input_data[0..4].copy_from_slice(&selector);
     input_data[16..36].copy_from_slice(&contract_array);
 
-    // TODO: init locked amount, ledger status
+    let smart_contract = decode_smart_contract_from_array(contract_array).unwrap();
+    let init_staker_info = DappsStaking::staker_info(&staker, &smart_contract);
+    assert!(!init_staker_info.latest_staked_value().is_zero());
 
     // call withdraw_from_unregistered(). Check usable_balance before and after the call
     assert_ok!(Call::Evm(evm_call(staker.clone().into(), input_data)).dispatch(Origin::root()));
 
-    // TODO: post withdraw checks, expect locked amount to decrease, verify ledger and general contract info from current era
+    let final_staker_info = DappsStaking::staker_info(&staker, &smart_contract);
+    assert!(final_staker_info.latest_staked_value().is_zero());
+}
+
+/// helper function to withdraw funds from unregistered contract
+fn nomination_transfer_verify(
+    staker: AccountId32,
+    origin_contract_array: [u8; 20],
+    amount: Balance,
+    target_contract_array: [u8; 20],
+) {
+    let selector = &Keccak256::digest(b"nomination_transfer(address,uint128,address)")[0..4];
+    let mut input_data = Vec::<u8>::from([0u8; 100]);
+
+    input_data[0..4].copy_from_slice(&selector);
+    input_data[16..36].copy_from_slice(&origin_contract_array);
+    input_data[52..68].copy_from_slice(&amount.to_be_bytes());
+    input_data[80..100].copy_from_slice(&target_contract_array);
+
+    let origin_smart_contract = decode_smart_contract_from_array(origin_contract_array).unwrap();
+    let target_smart_contract = decode_smart_contract_from_array(target_contract_array).unwrap();
+
+    // Read init data staker info states
+    let init_origin_staker_info = DappsStaking::staker_info(&staker, &origin_smart_contract);
+    let init_target_staker_info = DappsStaking::staker_info(&staker, &target_smart_contract);
+
+    assert_ok!(Call::Evm(evm_call(staker.clone().into(), input_data)).dispatch(Origin::root()));
+
+    let final_origin_staker_info = DappsStaking::staker_info(&staker, &origin_smart_contract);
+    let final_target_staker_info = DappsStaking::staker_info(&staker, &target_smart_contract);
+
+    // Verify final state
+    let transfer_amount = if init_origin_staker_info
+        .latest_staked_value()
+        .saturating_sub(amount)
+        < MINIMUM_STAKING_AMOUNT
+    {
+        init_origin_staker_info.latest_staked_value()
+    } else {
+        amount
+    };
+
+    assert_eq!(
+        final_origin_staker_info.latest_staked_value() + transfer_amount,
+        init_origin_staker_info.latest_staked_value()
+    );
+    assert_eq!(
+        final_target_staker_info.latest_staked_value() - transfer_amount,
+        init_target_staker_info.latest_staked_value()
+    );
 }
 
 /// helper function to bond, stake and verify if result is OK
