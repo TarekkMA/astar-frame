@@ -404,6 +404,31 @@ fn bond_and_stake_ss58_is_ok() {
         });
 }
 
+#[test]
+fn withdraw_from_unregistered() {
+    ExternalityBuilder::default()
+        .with_balances(vec![
+            (TestAccount::Alex.into(), 200 * AST),
+            (TestAccount::Bobo.into(), 200 * AST),
+        ])
+        .build()
+        .execute_with(|| {
+            initialize_first_block();
+
+            // register new contract by Alex
+            let developer = TestAccount::Alex.into();
+            register_and_verify(developer, TEST_CONTRACT);
+
+            let amount_staked_bobo = 100 * AST;
+            bond_stake_and_verify(TestAccount::Bobo, TEST_CONTRACT, amount_staked_bobo);
+
+            let contract_id = decode_smart_contract_from_array(TEST_CONTRACT).unwrap();
+            assert_ok!(DappsStaking::unregister(Origin::root(), contract_id));
+
+            withdraw_from_unregistered_verify(TestAccount::Bobo.into(), TEST_CONTRACT);
+        });
+}
+
 // ****************************************************************************************************
 // Helper functions
 // ****************************************************************************************************
@@ -581,6 +606,22 @@ fn withdraw_unbonded_verify(staker: AccountId32) {
         <TestRuntime as pallet_evm::Config>::Currency::free_balance(&staker),
         <TestRuntime as pallet_evm::Config>::Currency::usable_balance(&staker)
     );
+}
+
+/// helper function to withdraw funds from unregistered contract
+fn withdraw_from_unregistered_verify(staker: AccountId32, contract_array: [u8; 20]) {
+    let selector = &Keccak256::digest(b"withdraw_from_unregistered(account)")[0..4];
+    let mut input_data = Vec::<u8>::from([0u8; 36]);
+
+    input_data[0..4].copy_from_slice(&selector);
+    input_data[16..36].copy_from_slice(&contract_array);
+
+    // TODO: init locked amount, ledger status
+
+    // call withdraw_from_unregistered(). Check usable_balance before and after the call
+    assert_ok!(Call::Evm(evm_call(staker.clone().into(), input_data)).dispatch(Origin::root()));
+
+    // TODO: post withdraw checks, expect locked amount to decrease, verify ledger and general contract info from current era
 }
 
 /// helper function to bond, stake and verify if result is OK

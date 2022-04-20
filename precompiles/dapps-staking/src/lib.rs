@@ -363,6 +363,70 @@ where
         Ok((Some(origin).into(), call))
     }
 
+    /// Withdraw staked funds from the unregistered contract
+    fn withdraw_from_unregistered(
+        input: &mut EvmDataReader,
+        gasometer: &mut Gasometer,
+        context: &Context,
+    ) -> EvmResult<(
+        <R::Call as Dispatchable>::Origin,
+        pallet_dapps_staking::Call<R>,
+    )> {
+        input.expect_arguments(gasometer, 1)?;
+        gasometer.record_cost(RuntimeHelper::<R>::db_read_gas_cost())?;
+
+        // parse contract's address
+        let contract_h160 = input.read::<Address>(gasometer)?.0;
+        let contract_id = Self::decode_smart_contract(gasometer, contract_h160)?;
+        log::trace!(target: "ds-precompile", "withdraw_from_unregistered {:?}", contract_id);
+
+        // Build call with origin.
+        let origin = R::AddressMapping::into_account_id(context.caller);
+        let call =
+            pallet_dapps_staking::Call::<R>::withdraw_from_unregistered { contract_id }.into();
+
+        // Return call information
+        Ok((Some(origin).into(), call))
+    }
+
+    /// Claim rewards for the contract in the dapps-staking pallet
+    fn nomination_transfer(
+        input: &mut EvmDataReader,
+        gasometer: &mut Gasometer,
+        context: &Context,
+    ) -> EvmResult<(
+        <R::Call as Dispatchable>::Origin,
+        pallet_dapps_staking::Call<R>,
+    )> {
+        input.expect_arguments(gasometer, 3)?;
+        gasometer.record_cost(RuntimeHelper::<R>::db_read_gas_cost())?;
+
+        // parse origin contract's address
+        let origin_contract_h160 = input.read::<Address>(gasometer)?.0;
+        let origin_contract_id = Self::decode_smart_contract(gasometer, origin_contract_h160)?;
+
+        // parse balance to be transferred
+        let value = input.read::<BalanceOf<R>>(gasometer)?;
+
+        // parse target contract's address
+        let target_contract_h160 = input.read::<Address>(gasometer)?.0;
+        let target_contract_id = Self::decode_smart_contract(gasometer, target_contract_h160)?;
+
+        log::trace!(target: "ds-precompile", "nomination_transfer {:?} {:?} {:?}", origin_contract_id, value, target_contract_id);
+
+        // Build call with origin.
+        let origin = R::AddressMapping::into_account_id(context.caller);
+        let call = pallet_dapps_staking::Call::<R>::nomination_transfer {
+            origin_contract_id,
+            value,
+            target_contract_id,
+        }
+        .into();
+
+        // Return call information
+        Ok((Some(origin).into(), call))
+    }
+
     /// Helper method to decode type SmartContract enum
     pub fn decode_smart_contract(
         gasometer: &mut Gasometer,
@@ -399,6 +463,8 @@ pub enum Action {
     WithdrawUnbounded = "withdraw_unbonded()",
     ClaimDapp = "claim_dapp(address,uint128)",
     ClaimStaker = "claim_staker(address)",
+    WithdrawFromUnregistered = "withdraw_from_unregistered(address)",
+    NominationTransfer = "nomination_transfer(address, uint128, address)",
 }
 
 impl<R> Precompile for DappsStakingWrapper<R>
@@ -453,6 +519,10 @@ where
             Action::WithdrawUnbounded => Self::withdraw_unbonded(gasometer, context)?,
             Action::ClaimDapp => Self::claim_dapp(input, gasometer, context)?,
             Action::ClaimStaker => Self::claim_staker(input, gasometer, context)?,
+            Action::WithdrawFromUnregistered => {
+                Self::withdraw_from_unregistered(input, gasometer, context)?
+            }
+            Action::NominationTransfer => Self::nomination_transfer(input, gasometer, context)?,
         };
 
         // Dispatch call (if enough gas).
