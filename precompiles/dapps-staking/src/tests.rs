@@ -659,7 +659,7 @@ fn withdraw_from_unregistered_verify(staker: AccountId32, contract_array: [u8; 2
     assert!(final_staker_info.latest_staked_value().is_zero());
 }
 
-/// helper function to withdraw funds from unregistered contract
+/// helper function to verify nomination transfer from origin to target contract
 fn nomination_transfer_verify(
     staker: AccountId32,
     origin_contract_array: [u8; 20],
@@ -687,11 +687,11 @@ fn nomination_transfer_verify(
     let final_target_staker_info = DappsStaking::staker_info(&staker, &target_smart_contract);
 
     // Verify final state
-    let transfer_amount = if init_origin_staker_info
+    let will_be_unstaked = init_origin_staker_info
         .latest_staked_value()
         .saturating_sub(amount)
-        < MINIMUM_STAKING_AMOUNT
-    {
+        < MINIMUM_STAKING_AMOUNT;
+    let transfer_amount = if will_be_unstaked {
         init_origin_staker_info.latest_staked_value()
     } else {
         amount
